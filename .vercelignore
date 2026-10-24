@@ -1,0 +1,9 @@
+backend/tests
+backend/Dockerfile
+frontend/Dockerfile
+frontend/nginx.conf
+docker-compose.yml
+scripts
+docs
+.env
+.local-credentials.txt

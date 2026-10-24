@@ -1,0 +1,55 @@
+# Development stack. The database is on a private network and is not published to the host.
+# For production, terminate TLS in front of `web`, use a managed PostgreSQL with sslmode=verify-full,
+# and pull secrets from a secrets manager instead of an .env file.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: bastion_owner
+      POSTGRES_PASSWORD: ${DB_OWNER_PASSWORD:?set DB_OWNER_PASSWORD in .env}
+      POSTGRES_DB: bastion
+    volumes: [dbdata:/var/lib/postgresql/data]
+    networks: [private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bastion_owner -d bastion"]
+      interval: 3s
+      retries: 20
+
+  migrate:
+    build: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      # The only long-lived definition of the owner credential for the app. It exits when migrations finish.
+      BASTION_DATABASE_ADMIN_URL: postgresql+psycopg://bastion_owner:${DB_OWNER_PASSWORD}@db:5432/bastion
+      BASTION_APP_DB_PASSWORD: ${DB_APP_PASSWORD:?set DB_APP_PASSWORD in .env}
+    depends_on: { db: { condition: service_healthy } }
+    networks: [private]
+
+  api:
+    build: ./backend
+    environment:
+      BASTION_DATABASE_URL: postgresql+psycopg://bastion_app:${DB_APP_PASSWORD}@db:5432/bastion
+      BASTION_FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?set FIELD_ENCRYPTION_KEY in .env}
+      BASTION_COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      BASTION_ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:8080}
+      BASTION_TRUST_PROXY_HEADERS: "true"
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    networks: [private]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  web:
+    build: ./frontend
+    ports: ["8080:8080"]
+    depends_on: [api]
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  dbdata:
+networks:
+  private:
